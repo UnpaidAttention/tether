@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# venv
+.venv/
+venv/
+env/
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.swp
+*~
+.idea/
+.vscode/
+
+# Runtime / local logs
+*.log
+nohup.out
+
+# Tether-specific scratch files from testing
+/tmp-*
+/tether-*.log
+/tether-*.pid

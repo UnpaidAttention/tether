@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Tether
+GenericName=Git remote manager
+Comment=Manage the remote connections on every local git repo.
+Exec=__TETHER_HOME__/launcher/tether.sh
+Icon=__TETHER_HOME__/launcher/tether.svg
+Terminal=false
+Categories=Development;RevisionControl;
+Keywords=git;remote;github;repository;
+StartupNotify=true
+StartupWMClass=tether
