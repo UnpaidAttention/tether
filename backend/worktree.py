@@ -43,22 +43,75 @@ class _RepoIndex:
     tracked: set[str]
     untracked: set[str]
     ignored: set[str]
+    # Subsets of ``tracked`` that have uncommitted changes.
+    modified: set[str]  # worktree differs from index
+    staged: set[str]    # index differs from HEAD (may or may not also be modified)
     # Directory -> status counts, computed lazily.
     _dir_summary_cache: dict[str, dict[str, int]] = field(default_factory=dict)
+
+
+def _parse_porcelain(out: str) -> tuple[set[str], set[str]]:
+    """Parse `git status --porcelain=v1 -z` into (modified, staged) sets.
+
+    Porcelain v1 format per entry: ``XY path[\x00orig]`` where
+      X = index status, Y = worktree status.
+    With ``-z`` the separator is NUL. Rename/copy entries use two NULs
+    (current then original); we only care about the current filename.
+    """
+    modified: set[str] = set()
+    staged: set[str] = set()
+    if not out:
+        return modified, staged
+    records = out.split("\0")
+    i = 0
+    while i < len(records):
+        rec = records[i]
+        if len(rec) < 3:
+            i += 1
+            continue
+        x = rec[0]
+        y = rec[1]
+        name = rec[3:]
+        # Skip the original-name field on rename/copy.
+        skip_next = x in ("R", "C") or y in ("R", "C")
+        if x != " " and x != "?":
+            staged.add(name)
+        if y != " " and y != "?":
+            modified.add(name)
+        i += 2 if skip_next else 1
+    return modified, staged
 
 
 def _build_index(path: str) -> _RepoIndex:
     tracked = _ls_posix(path, "--cached")
     untracked = _ls_posix(path, "--others", "--exclude-standard")
     ignored = _ls_posix(path, "--others", "--ignored", "--exclude-standard")
-    return _RepoIndex(tracked=tracked, untracked=untracked, ignored=ignored)
+    try:
+        porcelain = _git_out(path, "status", "--porcelain=v1", "-z")
+        modified, staged = _parse_porcelain(porcelain)
+    except WorkTreeError:
+        modified, staged = set(), set()
+    # Intersect with ``tracked`` — we only want to classify tracked files
+    # as modified/staged. An "??" porcelain entry is untracked and already
+    # captured in ``untracked`` above.
+    modified &= tracked
+    staged_tracked = staged & tracked
+    return _RepoIndex(
+        tracked=tracked,
+        untracked=untracked,
+        ignored=ignored,
+        modified=modified,
+        staged=staged_tracked,
+    )
 
 
 def _summarise_dir(idx: _RepoIndex, rel_dir: str) -> dict[str, int]:
     """Count how many files under ``rel_dir`` fall into each status bucket.
 
     ``rel_dir`` is a POSIX-style relative path (""==repo root). Includes
-    descendants at every depth.
+    descendants at every depth. ``modified`` and ``staged`` are *not*
+    disjoint from ``tracked`` — they're counts of subsets of the tracked
+    files within this subtree that happen to have uncommitted changes.
     """
     cache_key = rel_dir
     cached = idx._dir_summary_cache.get(cache_key)
@@ -66,34 +119,60 @@ def _summarise_dir(idx: _RepoIndex, rel_dir: str) -> dict[str, int]:
         return cached
 
     prefix = "" if rel_dir in ("", ".") else rel_dir.rstrip("/") + "/"
-    counts = {"tracked": 0, "untracked": 0, "ignored": 0}
-    for f in idx.tracked:
-        if not prefix or f.startswith(prefix):
-            counts["tracked"] += 1
-    for f in idx.untracked:
-        if not prefix or f.startswith(prefix):
-            counts["untracked"] += 1
-    for f in idx.ignored:
-        if not prefix or f.startswith(prefix):
-            counts["ignored"] += 1
+    def _count(s: set[str]) -> int:
+        if not prefix:
+            return len(s)
+        return sum(1 for f in s if f.startswith(prefix))
+
+    counts = {
+        "tracked": _count(idx.tracked),
+        "untracked": _count(idx.untracked),
+        "ignored": _count(idx.ignored),
+        "modified": _count(idx.modified),
+        "staged": _count(idx.staged),
+    }
     idx._dir_summary_cache[cache_key] = counts
     return counts
 
 
 def _classify_dir(summary: dict[str, int]) -> str:
-    t, u, i = summary["tracked"], summary["untracked"], summary["ignored"]
+    """Pick the most meaningful single status for a directory.
+
+    Priorities (when non-zero): modified/staged beat "clean tracked" because
+    uncommitted changes are the signal a user most wants to see. Untracked
+    beats ignored when both are present. An entirely empty dir is "empty"
+    (won't be pushed — git doesn't track empty dirs).
+    """
+    t, u, i = summary.get("tracked", 0), summary.get("untracked", 0), summary.get("ignored", 0)
+    m, s = summary.get("modified", 0), summary.get("staged", 0)
     total = t + u + i
     if total == 0:
-        # Empty directory — git doesn't track empties, so this won't be pushed.
         return "empty"
-    nonzero = [name for name, n in summary.items() if n > 0]
+
+    # Base classifier — uses only the disjoint buckets.
+    base_counts = {"tracked": t, "untracked": u, "ignored": i}
+    nonzero = [name for name, n in base_counts.items() if n > 0]
     if len(nonzero) == 1:
-        return nonzero[0]
-    return "mixed"
+        base = nonzero[0]
+    else:
+        base = "mixed"
+
+    # Overlay: if there are uncommitted changes inside, that's the lead.
+    # Staged beats modified because "ready to commit" is a stronger signal
+    # than "edited".
+    if s > 0:
+        return "staged"
+    if m > 0:
+        return "modified"
+    return base
 
 
 def _classify_file(rel: str, idx: _RepoIndex) -> str:
     if rel in idx.tracked:
+        if rel in idx.staged:
+            return "staged"
+        if rel in idx.modified:
+            return "modified"
         return "tracked"
     if rel in idx.ignored:
         return "ignored"
@@ -172,6 +251,8 @@ def list_tree(path: str, subdir: str = "") -> dict:
             "tracked": len(idx.tracked),
             "untracked": len(idx.untracked),
             "ignored": len(idx.ignored),
+            "modified": len(idx.modified),
+            "staged": len(idx.staged),
         },
     }
 

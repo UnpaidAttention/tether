@@ -471,6 +471,8 @@ function renderRepoList() {
     if (state.activeView === "repo" && state.selectedId === r.id) classes.push("is-selected");
     if (critical) classes.push("repo-row--critical");
 
+    const ahead = e.aheadCommits || 0;
+
     const row = h("a", {
       class: classes.join(" "),
       href: `#${r.id}`,
@@ -484,6 +486,15 @@ function renderRepoList() {
           e.sensitive ? h("span", { class: "flag flag--sensitive", title: "Marked sensitive" }, icon("star", 11)) : null,
           urlChanged ? h("span", { class: "flag flag--url-changed", title: "Remote URL changed recently" }, icon("arrows", 11)) : null,
         ),
+        ahead > 0
+          ? h("span", {
+              class: "ahead-pill",
+              title: `${ahead} commit${ahead === 1 ? "" : "s"} on ${e.currentBranch || "HEAD"} not yet pushed`,
+            },
+              h("span", { class: "ahead-pill-arrow" }, "↑"),
+              String(ahead),
+            )
+          : null,
         visPill(vis),
       ),
       h("div", { class: "repo-row-path", title: r.path }, r.path),
@@ -910,9 +921,10 @@ function renderFiles(body, d) {
     renderBreadcrumbs(d, currentSubdir),
     h("div", { class: "files-legend" },
       h("span", { class: "legend-swatch" }, h("span", { class: "status-dot status-dot--tracked" }), "tracked"),
+      h("span", { class: "legend-swatch" }, h("span", { class: "status-dot status-dot--modified" }), "modified"),
+      h("span", { class: "legend-swatch" }, h("span", { class: "status-dot status-dot--staged" }), "staged"),
       h("span", { class: "legend-swatch" }, h("span", { class: "status-dot status-dot--untracked" }), "untracked"),
       h("span", { class: "legend-swatch" }, h("span", { class: "status-dot status-dot--ignored" }), "ignored"),
-      h("span", { class: "legend-swatch" }, h("span", { class: "status-dot status-dot--mixed" }), "mixed"),
       h("label", { class: "files-toggle" },
         h("input", {
           type: "checkbox",
@@ -937,12 +949,21 @@ function renderFiles(body, d) {
 
   const data = state.filesData;
   const totals = data.totals || {};
-  body.append(h("div", { class: "files-total-summary" },
+  const totalsChildren = [
     h("span", {}, "across the whole repo: "),
-    h("strong", { class: "sum--tracked" }, `${totals.tracked || 0}`), " tracked · ",
-    h("strong", { class: "sum--untracked" }, `${totals.untracked || 0}`), " untracked · ",
-    h("strong", { class: "sum--ignored" }, `${totals.ignored || 0}`), " ignored",
-  ));
+    h("strong", { class: "sum--tracked" }, `${totals.tracked || 0}`), " tracked",
+  ];
+  if ((totals.modified || 0) > 0) {
+    totalsChildren.push(" · ", h("strong", { class: "sum--modified" }, `${totals.modified} modified`));
+  }
+  if ((totals.staged || 0) > 0) {
+    totalsChildren.push(" · ", h("strong", { class: "sum--staged" }, `${totals.staged} staged`));
+  }
+  if ((totals.untracked || 0) > 0) {
+    totalsChildren.push(" · ", h("strong", { class: "sum--untracked" }, `${totals.untracked} untracked`));
+  }
+  totalsChildren.push(" · ", h("strong", { class: "sum--ignored" }, `${totals.ignored || 0}`), " ignored");
+  body.append(h("div", { class: "files-total-summary" }, ...totalsChildren));
 
   const entries = (data.entries || []).filter((e) =>
     state.filesShowIgnored || (e.status !== "ignored" && e.status !== "empty")
@@ -990,6 +1011,8 @@ function renderFileRow(entry, currentSubdir) {
     ? entry.summary
       ? h("span", { class: "file-row-summary" },
           entry.summary.tracked > 0 ? h("span", { class: "sum--tracked" }, `${entry.summary.tracked} tracked`) : null,
+          entry.summary.modified > 0 ? h("span", { class: "sum--modified" }, `${entry.summary.modified} modified`) : null,
+          entry.summary.staged > 0 ? h("span", { class: "sum--staged" }, `${entry.summary.staged} staged`) : null,
           entry.summary.untracked > 0 ? h("span", { class: "sum--untracked" }, `${entry.summary.untracked} untracked`) : null,
           entry.summary.ignored > 0 ? h("span", { class: "sum--ignored" }, `${entry.summary.ignored} ignored`) : null,
         )
@@ -1299,6 +1322,16 @@ function renderAuditDashboard(panel) {
     severity: "warn",
     items: a.publicExposure,
     render: auditItemBasic,
+  });
+
+  auditSection(panel, {
+    title: "Repos with commits waiting to push",
+    note: "Current branch has commits that aren't on its upstream yet. Sorted by how far ahead you are.",
+    severity: "info",
+    items: a.unpushedCommits,
+    render: (r) => auditItemDetail(r,
+      `${r.aheadCommits} ahead on ${r.currentBranch || "HEAD"}${r.dirty ? ` · ${r.changedFiles} uncommitted changes` : ""}`
+    ),
   });
 
   auditSection(panel, {

@@ -55,6 +55,10 @@ class RepoEnrichment:
     dirty: bool = False
     changed_files: int = 0
     current_branch: str | None = None
+    # Commits on the current branch that aren't on its upstream — i.e.,
+    # committed but not yet pushed. 0 means either "nothing to push" or
+    # "no upstream configured"; the sidebar only surfaces it when > 0.
+    ahead_commits: int = 0
     github_remotes: list[GithubRemoteLink] = field(default_factory=list)
     visibility_summary: str = "none"      # none | private | public | mixed | unknown
     sensitive: bool = False
@@ -67,6 +71,7 @@ class RepoEnrichment:
             "dirty": self.dirty,
             "changedFiles": self.changed_files,
             "currentBranch": self.current_branch,
+            "aheadCommits": self.ahead_commits,
             "githubRemotes": [g.to_dict() for g in self.github_remotes],
             "visibilitySummary": self.visibility_summary,
             "sensitive": self.sensitive,
@@ -91,8 +96,8 @@ _SCAN_LAST_ERROR: str | None = None
 # --- Scan + enrichment --------------------------------------------
 
 
-def _enrich_one(entry: RepoEntry) -> tuple[str, list[tuple[str, str]], list[GithubRemoteLink], bool, int, str | None]:
-    """Cheap per-repo work safe to run in a thread: remotes + status + folder name."""
+def _enrich_one(entry: RepoEntry) -> tuple[str, list[tuple[str, str]], list[GithubRemoteLink], bool, int, str | None, int]:
+    """Cheap per-repo work safe to run in a thread: remotes + status + folder name + ahead count."""
     try:
         remote_list = repo.remotes(entry.path)
     except repo.GitError:
@@ -127,8 +132,9 @@ def _enrich_one(entry: RepoEntry) -> tuple[str, list[tuple[str, str]], list[Gith
         changed_files = 0
 
     current = repo.default_branch(entry.path)
+    ahead = repo.current_branch_ahead(entry.path)
 
-    return entry.id, remote_pairs, gh_links, dirty, changed_files, current
+    return entry.id, remote_pairs, gh_links, dirty, changed_files, current, ahead
 
 
 def _rescan() -> list[RepoEntry]:
@@ -156,17 +162,17 @@ def _rescan_inner() -> list[RepoEntry]:
 
     sensitive_paths = store.all_sensitive()
 
-    # Phase 1: per-repo git work (remotes, status) in parallel.
-    per_repo_work: dict[str, tuple[list[tuple[str, str]], list[GithubRemoteLink], bool, int, str | None]] = {}
+    # Phase 1: per-repo git work (remotes, status, ahead count) in parallel.
+    per_repo_work: dict[str, tuple[list[tuple[str, str]], list[GithubRemoteLink], bool, int, str | None, int]] = {}
     with ThreadPoolExecutor(max_workers=8) as pool:
-        for rid, pairs, gh_links, dirty, changed, current in pool.map(_enrich_one, entries):
-            per_repo_work[rid] = (pairs, gh_links, dirty, changed, current)
+        for rid, pairs, gh_links, dirty, changed, current, ahead in pool.map(_enrich_one, entries):
+            per_repo_work[rid] = (pairs, gh_links, dirty, changed, current, ahead)
 
     # Phase 2: record URL changes + collect unique GitHub lookups.
     url_changes_per_repo: dict[str, dict] = {}
     github_pairs_needed: set[tuple[str, str]] = set()
     for entry in entries:
-        pairs, gh_links, _, _, _ = per_repo_work[entry.id]
+        pairs, gh_links, _, _, _, _ = per_repo_work[entry.id]
         diffs = store.record_remotes(entry.path, pairs)
         changed = {k: v for k, v in diffs.items() if v.get("changed")}
         url_changes_per_repo[entry.id] = changed
@@ -197,7 +203,7 @@ def _rescan_inner() -> list[RepoEntry]:
     with _LOCK:
         _ENRICH.clear()
         for entry in entries:
-            pairs, gh_links, dirty, changed_files, current = per_repo_work[entry.id]
+            pairs, gh_links, dirty, changed_files, current, ahead = per_repo_work[entry.id]
             # Attach visibility to each github link.
             for link in gh_links:
                 v = visibility_map.get((link.owner, link.repo_name)) or {}
@@ -217,6 +223,7 @@ def _rescan_inner() -> list[RepoEntry]:
                 dirty=dirty,
                 changed_files=changed_files,
                 current_branch=current,
+                ahead_commits=ahead,
                 github_remotes=gh_links,
                 visibility_summary=summary,
                 sensitive=entry.path in sensitive_paths,
@@ -403,6 +410,7 @@ def _refresh_single(entry: RepoEntry) -> None:
 
     status = repo.status_summary(entry.path)
     current = repo.default_branch(entry.path)
+    ahead = repo.current_branch_ahead(entry.path)
     folder = os.path.basename(entry.path)
     sensitive_paths = store.all_sensitive()
 
@@ -412,6 +420,7 @@ def _refresh_single(entry: RepoEntry) -> None:
             dirty=bool(status.get("dirty")),
             changed_files=int(status.get("changedFiles") or 0),
             current_branch=current,
+            ahead_commits=ahead,
             github_remotes=gh_links,
             visibility_summary=_summarize_visibility(gh_links, github.gh_available()),
             sensitive=entry.path in sensitive_paths,
@@ -821,6 +830,7 @@ def audit() -> dict:
     sensitive_public = []       # marked sensitive AND has public remote
     unknown = []                # couldn't determine (lookup failed)
     not_found = []              # remote points to a repo gh can't find
+    unpushed = []               # current branch has commits ahead of its upstream
 
     def mini(entry: RepoEntry, enr: RepoEnrichment) -> dict:
         return {
@@ -865,6 +875,16 @@ def audit() -> dict:
                     for l in enr.github_remotes if l.exists is False
                 ],
             })
+        if enr.ahead_commits > 0:
+            unpushed.append({
+                **mini(entry, enr),
+                "aheadCommits": enr.ahead_commits,
+                "currentBranch": enr.current_branch,
+                "dirty": enr.dirty,
+                "changedFiles": enr.changed_files,
+            })
+
+    unpushed.sort(key=lambda r: r["aheadCommits"], reverse=True)
 
     total = len(snapshot)
     return {
@@ -876,6 +896,7 @@ def audit() -> dict:
         "urlChanges": url_changes,
         "unknown": unknown,
         "notFound": not_found,
+        "unpushedCommits": unpushed,
     }
 
 

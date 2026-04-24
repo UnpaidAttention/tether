@@ -442,6 +442,29 @@ kbd.kbd {
   border-style: dashed;
 }
 
+.ahead-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  background: var(--accent);
+  color: var(--accent-ink, #FFF6EC);
+  border: 1px solid var(--accent-deep);
+  flex-shrink: 0;
+  box-shadow: 0 1px 2px rgba(184, 91, 44, 0.3);
+}
+
+.ahead-pill-arrow {
+  font-weight: 600;
+  font-size: 11px;
+  line-height: 1;
+}
+
 .repo-row--critical {
   border-color: var(--danger);
   background: linear-gradient(to right, var(--danger-wash) 0%, var(--surface) 40%);
@@ -1175,6 +1198,8 @@ kbd.kbd {
 .status-dot--ignored { background: var(--muted-soft); }
 .status-dot--mixed { background: linear-gradient(90deg, var(--success) 50%, var(--muted-soft) 50%); }
 .status-dot--empty { background: transparent; border: 1px dashed var(--muted-soft); }
+.status-dot--modified { background: var(--warn); box-shadow: 0 0 0 2px var(--warn-wash); }
+.status-dot--staged { background: var(--accent); box-shadow: 0 0 0 2px var(--accent-wash); }
 
 .files-toggle {
   display: inline-flex;
@@ -1263,6 +1288,16 @@ kbd.kbd {
   color: var(--warn);
 }
 
+.file-row--modified .file-row-name {
+  color: var(--warn);
+  font-weight: 500;
+}
+
+.file-row--staged .file-row-name {
+  color: var(--accent-deep);
+  font-weight: 500;
+}
+
 .file-row-summary {
   font-family: var(--font-mono);
   font-size: 11px;
@@ -1275,6 +1310,8 @@ kbd.kbd {
 .file-row-summary .sum--tracked { color: var(--success); }
 .file-row-summary .sum--untracked { color: var(--warn); }
 .file-row-summary .sum--ignored { color: var(--muted-soft); }
+.file-row-summary .sum--modified { color: var(--warn); font-weight: 500; }
+.file-row-summary .sum--staged { color: var(--accent-deep); font-weight: 500; }
 
 .file-row-meta {
   font-family: var(--font-mono);

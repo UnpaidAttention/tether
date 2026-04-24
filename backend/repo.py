@@ -227,3 +227,18 @@ def status_summary(path: str) -> dict:
         return {"error": str(e), "dirty": False, "changedFiles": 0}
     lines = [l for l in out.splitlines() if l.strip()]
     return {"dirty": bool(lines), "changedFiles": len(lines)}
+
+
+def current_branch_ahead(path: str) -> int:
+    """Commits on the current branch that aren't on its upstream.
+
+    Returns 0 if there's no upstream configured, or if the repo is in a
+    detached-HEAD state, or if the rev-list fails for any reason. The
+    caller treats 0 as "nothing to push" — indistinguishable from
+    "genuinely in sync" from a UX standpoint.
+    """
+    try:
+        out = _git(path, "rev-list", "--count", "@{u}..HEAD", timeout=10.0).strip()
+        return int(out)
+    except (GitError, ValueError):
+        return 0
