@@ -67,13 +67,14 @@ cd ~/tether
 ./install.sh
 ```
 
-`install.sh` is idempotent. It:
+`install.sh` is safe to re-run at any time — it only does work that needs doing. It:
 
-1. Creates a Python venv at `.venv/`
-2. Installs FastAPI + Uvicorn into it
-3. Stamps the `.desktop` entry with the absolute path of your install
-4. Drops the desktop entry into `~/.local/share/applications/`
-5. Runs `update-desktop-database` so the app menu picks it up
+1. Checks that `python3` is at least 3.10 and that the `venv` module is present (fails fast with a clear message otherwise)
+2. Creates a Python venv at `.venv/`
+3. Installs FastAPI + Uvicorn into it
+4. Stamps the `.desktop` entry with the absolute path of your install
+5. Drops the desktop entry into `~/.local/share/applications/`
+6. Runs `update-desktop-database` so the app menu picks it up
 
 After that, search for **Tether** in your app menu (or run `./launcher/tether.sh` directly). It opens in your default browser.
 

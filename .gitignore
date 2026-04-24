@@ -27,3 +27,10 @@ nohup.out
 /tmp-*
 /tether-*.log
 /tether-*.pid
+
+# Pasted images / screenshots dropped into the repo root (ad-hoc, not meant
+# to be committed — save them elsewhere if you want them in history).
+/Pasted image*.png
+/Screenshot*.png
+/screenshot*.png
+/*.paste.png

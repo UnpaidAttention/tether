@@ -2028,9 +2028,7 @@ async function boot() {
   });
 
   try {
-    const meta = await api("/api/meta");
-    state.root = meta.root;
-    state.gh = meta.gh;
+    await waitForInitialScan();
     const res = await api("/api/repos");
     state.repos = res.repos;
     filterRepos();
@@ -2039,6 +2037,41 @@ async function boot() {
     renderRepoList();
   } catch (err) {
     toast(`Can't reach the Tether server: ${err.message}`, "err");
+  }
+}
+
+async function waitForInitialScan() {
+  // Poll /api/meta until the background scan finishes or errors out.
+  // The launcher now returns as soon as uvicorn binds, so the UI can load
+  // before the scan has any repos to show.
+  const started = Date.now();
+  const maxWaitMs = 60000;
+  while (true) {
+    const meta = await api("/api/meta");
+    state.root = meta.root;
+    state.gh = meta.gh;
+    const scan = meta.scan || {};
+    if (scan.lastError) {
+      toast(`Scan error: ${scan.lastError}`, "err");
+    }
+    // First paint — always render what we have so far so the user sees chrome.
+    renderAuthBanner();
+    renderMeta();
+    if (!scan.inProgress || scan.lastCompletedAt) break;
+    if (Date.now() - started > maxWaitMs) {
+      toast("Initial scan is taking a while. Showing what we have so far.", "err");
+      break;
+    }
+    // Show a scanning placeholder in the repo list while we wait.
+    const list = $("#repo-list");
+    if (list && !list.querySelector(".list-state--scanning")) {
+      clear(list);
+      list.append(h("div", { class: "list-state list-state--scanning" },
+        h("span", { class: "spinner" }),
+        "Scanning your repositories…",
+      ));
+    }
+    await new Promise((r) => setTimeout(r, 500));
   }
 }
 

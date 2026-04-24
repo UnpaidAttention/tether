@@ -79,6 +79,14 @@ _REPOS: dict[str, RepoEntry] = {}
 _ENRICH: dict[str, RepoEnrichment] = {}
 _LOCK = threading.Lock()
 
+# Set to True while a scan (filesystem walk + gh visibility lookups) is in
+# flight. The frontend polls /api/meta to know whether to show a scanning
+# indicator.
+_SCAN_IN_PROGRESS = False
+_SCAN_STARTED_AT: float | None = None
+_SCAN_LAST_COMPLETED_AT: float | None = None
+_SCAN_LAST_ERROR: str | None = None
+
 
 # --- Scan + enrichment --------------------------------------------
 
@@ -124,6 +132,22 @@ def _enrich_one(entry: RepoEntry) -> tuple[str, list[tuple[str, str]], list[Gith
 
 
 def _rescan() -> list[RepoEntry]:
+    global _SCAN_IN_PROGRESS, _SCAN_STARTED_AT, _SCAN_LAST_COMPLETED_AT, _SCAN_LAST_ERROR
+    import time as _time
+    _SCAN_IN_PROGRESS = True
+    _SCAN_STARTED_AT = _time.time()
+    _SCAN_LAST_ERROR = None
+    try:
+        return _rescan_inner()
+    except Exception as e:
+        _SCAN_LAST_ERROR = f"{type(e).__name__}: {e}"
+        raise
+    finally:
+        _SCAN_IN_PROGRESS = False
+        _SCAN_LAST_COMPLETED_AT = _time.time()
+
+
+def _rescan_inner() -> list[RepoEntry]:
     with _LOCK:
         entries = scan(ROOT_DIR, extra_paths=store.custom_paths())
         _REPOS.clear()
@@ -238,9 +262,22 @@ def _get(repo_id: str) -> RepoEntry:
     return entry
 
 
+def _start_scan_in_background() -> None:
+    """Kick off _rescan() in a daemon thread so the HTTP server can bind fast.
+
+    The initial scan can take several seconds on machines with many repos
+    (filesystem walk + one `gh repo view` per unique GitHub origin). Running
+    it synchronously in lifespan means the launcher times out waiting for
+    the port, and the user sees a "server didn't start" dialog even though
+    the server was about to come up fine.
+    """
+    t = threading.Thread(target=_rescan, name="tether-initial-scan", daemon=True)
+    t.start()
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    _rescan()
+    _start_scan_in_background()
     yield
 
 
@@ -256,6 +293,12 @@ def meta() -> dict:
         "root": ROOT_DIR,
         "repoCount": len(_REPOS),
         "gh": github.auth_status(),
+        "scan": {
+            "inProgress": _SCAN_IN_PROGRESS,
+            "startedAt": _SCAN_STARTED_AT,
+            "lastCompletedAt": _SCAN_LAST_COMPLETED_AT,
+            "lastError": _SCAN_LAST_ERROR,
+        },
     }
 
 

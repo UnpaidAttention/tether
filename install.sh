@@ -18,8 +18,29 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 1
 fi
 
+# Tether uses PEP 604 union types (str | None) and Pydantic v2, both of which
+# need Python 3.10+. Fail fast with a clear message instead of letting the
+# server crash obscurely at import time.
+PY_MAJOR=$(python3 -c 'import sys; print(sys.version_info.major)')
+PY_MINOR=$(python3 -c 'import sys; print(sys.version_info.minor)')
+if [[ "$PY_MAJOR" -lt 3 || ( "$PY_MAJOR" -eq 3 && "$PY_MINOR" -lt 10 ) ]]; then
+  echo "Tether needs Python 3.10+. Your python3 is $PY_MAJOR.$PY_MINOR." >&2
+  echo "Install a newer python3 and re-run this script." >&2
+  exit 1
+fi
+
 if ! command -v git >/dev/null 2>&1; then
   echo "git is required but not found on PATH." >&2
+  exit 1
+fi
+
+# The venv module ships with standard CPython but some minimal distro
+# packages split it out (python3-venv on Debian/Ubuntu). Detect early so
+# the user gets a package name, not a cryptic ModuleNotFoundError.
+if ! python3 -c 'import venv' >/dev/null 2>&1; then
+  echo "python3 is installed but the 'venv' module is missing." >&2
+  echo "On Debian/Ubuntu: sudo apt install python3-venv" >&2
+  echo "On Fedora/RHEL:   the 'python3' rpm already includes it; reinstall if needed." >&2
   exit 1
 fi
 
