@@ -188,3 +188,4 @@ Issues and PRs welcome, especially for platform coverage (macOS / BSD launchers,
 ## License
 
 MIT. See [LICENSE](./LICENSE).
+
