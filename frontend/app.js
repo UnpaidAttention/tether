@@ -16,6 +16,11 @@ const state = {
   activity: null,
   activityLoading: false,
   repoActivity: null,          // per-repo cache, indexed by repo id
+  filesSubdir: "",             // current subdir within Files tab
+  filesData: null,             // last /api/repos/{id}/tree response
+  filesLoading: false,
+  filesRepoId: null,           // which repo the above data belongs to
+  filesShowIgnored: true,
   githubCache: new Map(),
 };
 
@@ -104,6 +109,10 @@ const ICONS = {
   eye: [["path", { d: "M1.5 8S4 3 8 3s6.5 5 6.5 5S12 13 8 13 1.5 8 1.5 8Z" }], ["circle", { cx: 8, cy: 8, r: 2 }]],
   activity: [["path", { d: "M2 8h3l1.5-4 3 8 1.5-4h3" }]],
   clock: [["circle", { cx: 8, cy: 8, r: 6.5 }], ["path", { d: "M8 4.5V8l2.5 1.5" }]],
+  merge: [["circle", { cx: 4, cy: 4, r: 1.5 }], ["circle", { cx: 4, cy: 12, r: 1.5 }], ["circle", { cx: 12, cy: 10, r: 1.5 }], ["path", { d: "M4 5.5V10.5M4.5 4 Q 12 4 12 8.5" }]],
+  folder: [["path", { d: "M2 4h4l1.5 2H14v8H2z" }]],
+  file: [["path", { d: "M3 2h7l3 3v9H3z" }], ["path", { d: "M10 2v3h3" }]],
+  chevronLeft: [["path", { d: "M10 3 5 8l5 5" }]],
 };
 
 function icon(key, size = 14) {
@@ -510,6 +519,10 @@ async function selectRepo(id) {
   state.detail = null;
   state.activeTab = "remotes";
   state.githubCache.delete(id);
+  // Reset Files tab navigation when switching repos.
+  state.filesSubdir = "";
+  state.filesData = null;
+  state.filesRepoId = null;
   renderRepoList();
   renderDetail();
   try {
@@ -629,6 +642,7 @@ function renderDetail() {
       h("div", { class: "detail-actions-row" },
         makeActionBtn("Fetch", icon("download"), doFetch),
         makeActionBtn("Pull", icon("download"), doPull, true),
+        makeActionBtn("Merge", icon("merge"), promptMerge, true),
         makeActionBtn("Push", icon("upload"), promptPush, true),
       ),
     ),
@@ -639,6 +653,7 @@ function renderDetail() {
   panel.append(h("div", { class: "tabs" },
     makeTab("remotes", "Remotes", d.remotes.length),
     makeTab("branches", "Branches", d.branches.length),
+    makeTab("files", "Files", null),
     makeTab("github", "GitHub", ghRemotes.length),
     makeTab("activity", "Activity", null),
   ));
@@ -741,6 +756,7 @@ function renderTab(body) {
   if (!d) return;
   if (state.activeTab === "remotes") renderRemotes(body, d);
   if (state.activeTab === "branches") renderBranches(body, d);
+  if (state.activeTab === "files") renderFiles(body, d);
   if (state.activeTab === "github") renderGithub(body, d);
   if (state.activeTab === "activity") renderRepoActivity(body, d);
 }
@@ -876,6 +892,191 @@ function renderBranches(body, d) {
     )),
     h("tbody", {}, ...rows),
   ));
+}
+
+function fmtBytes(n) {
+  if (n === null || n === undefined) return "";
+  if (n < 1024) return `${n} B`;
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)} MB`;
+  return `${(n / 1024 / 1024 / 1024).toFixed(1)} GB`;
+}
+
+function renderFiles(body, d) {
+  const currentSubdir = state.filesSubdir;
+  const isSameRepo = state.filesRepoId === state.selectedId;
+
+  body.append(h("div", { class: "files-header" },
+    renderBreadcrumbs(d, currentSubdir),
+    h("div", { class: "files-legend" },
+      h("span", { class: "legend-swatch" }, h("span", { class: "status-dot status-dot--tracked" }), "tracked"),
+      h("span", { class: "legend-swatch" }, h("span", { class: "status-dot status-dot--untracked" }), "untracked"),
+      h("span", { class: "legend-swatch" }, h("span", { class: "status-dot status-dot--ignored" }), "ignored"),
+      h("span", { class: "legend-swatch" }, h("span", { class: "status-dot status-dot--mixed" }), "mixed"),
+      h("label", { class: "files-toggle" },
+        h("input", {
+          type: "checkbox",
+          checked: state.filesShowIgnored ? "checked" : null,
+          onchange: (e) => {
+            state.filesShowIgnored = e.target.checked;
+            renderDetail();
+          },
+        }),
+        "show ignored",
+      ),
+    ),
+  ));
+
+  if (!isSameRepo || !state.filesData || state.filesLoading) {
+    const loading = h("div", { class: "empty-state" },
+      h("span", { class: "spinner" }), " Inspecting working tree…");
+    body.append(loading);
+    loadFilesTree();
+    return;
+  }
+
+  const data = state.filesData;
+  const totals = data.totals || {};
+  body.append(h("div", { class: "files-total-summary" },
+    h("span", {}, "across the whole repo: "),
+    h("strong", { class: "sum--tracked" }, `${totals.tracked || 0}`), " tracked · ",
+    h("strong", { class: "sum--untracked" }, `${totals.untracked || 0}`), " untracked · ",
+    h("strong", { class: "sum--ignored" }, `${totals.ignored || 0}`), " ignored",
+  ));
+
+  const entries = (data.entries || []).filter((e) =>
+    state.filesShowIgnored || (e.status !== "ignored" && e.status !== "empty")
+  );
+
+  if (entries.length === 0) {
+    body.append(h("div", { class: "empty-state" },
+      h("p", {}, state.filesShowIgnored
+        ? "Empty directory."
+        : "Nothing to show (turn on 'show ignored' to see everything)."),
+    ));
+    return;
+  }
+
+  const list = h("div", { class: "file-list" });
+  for (const entry of entries) list.append(renderFileRow(entry, currentSubdir));
+  body.append(list);
+}
+
+function renderBreadcrumbs(d, currentSubdir) {
+  const parts = currentSubdir ? currentSubdir.split("/").filter(Boolean) : [];
+  const crumbs = h("div", { class: "files-breadcrumbs" });
+  crumbs.append(h("button", {
+    type: "button",
+    title: "Repo root",
+    onclick: () => navigateFilesSubdir(""),
+  }, d.name));
+  let acc = "";
+  for (const part of parts) {
+    acc = acc ? `${acc}/${part}` : part;
+    crumbs.append(h("span", { class: "sep" }, "/"));
+    const segPath = acc;
+    crumbs.append(h("button", {
+      type: "button",
+      onclick: () => navigateFilesSubdir(segPath),
+    }, part));
+  }
+  return crumbs;
+}
+
+function renderFileRow(entry, currentSubdir) {
+  const isDir = entry.type === "dir";
+  const statusClass = `status-dot--${entry.status}`;
+  const meta = isDir
+    ? entry.summary
+      ? h("span", { class: "file-row-summary" },
+          entry.summary.tracked > 0 ? h("span", { class: "sum--tracked" }, `${entry.summary.tracked} tracked`) : null,
+          entry.summary.untracked > 0 ? h("span", { class: "sum--untracked" }, `${entry.summary.untracked} untracked`) : null,
+          entry.summary.ignored > 0 ? h("span", { class: "sum--ignored" }, `${entry.summary.ignored} ignored`) : null,
+        )
+      : null
+    : h("span", { class: "file-row-meta" }, fmtBytes(entry.size));
+
+  return h("button", {
+    class: `file-row file-row--${isDir ? "dir" : "file"} file-row--${entry.status}`,
+    type: "button",
+    onclick: async () => {
+      if (isDir) {
+        const next = currentSubdir ? `${currentSubdir}/${entry.name}` : entry.name;
+        navigateFilesSubdir(next);
+      } else if (entry.status === "ignored") {
+        await showIgnoreRule(currentSubdir, entry.name);
+      }
+    },
+  },
+    h("span", { class: `file-row-status ${statusClass}`, title: entry.status }),
+    h("span", { class: "file-row-name" },
+      h("span", { class: "file-row-icon" }, icon(isDir ? "folder" : "file", 13)),
+      entry.name,
+    ),
+    meta,
+    isDir
+      ? h("span", { class: "file-row-meta" }, "dir")
+      : h("span", { class: "file-row-meta" }, entry.status),
+  );
+}
+
+function navigateFilesSubdir(subdir) {
+  state.filesSubdir = subdir;
+  state.filesData = null;
+  state.filesRepoId = null;
+  renderDetail();
+}
+
+async function loadFilesTree() {
+  if (state.filesLoading) return;
+  state.filesLoading = true;
+  const targetRepo = state.selectedId;
+  const targetSubdir = state.filesSubdir;
+  try {
+    const data = await api(`/api/repos/${targetRepo}/tree?subdir=${encodeURIComponent(targetSubdir)}`);
+    // Only accept if the user didn't navigate away while we waited.
+    if (state.selectedId === targetRepo && state.filesSubdir === targetSubdir) {
+      state.filesData = data;
+      state.filesRepoId = targetRepo;
+    }
+  } catch (err) {
+    if (state.selectedId === targetRepo && state.filesSubdir === targetSubdir) {
+      state.filesData = { error: err.message };
+      state.filesRepoId = targetRepo;
+    }
+  } finally {
+    state.filesLoading = false;
+    if (state.activeTab === "files") renderDetail();
+  }
+}
+
+async function showIgnoreRule(currentSubdir, name) {
+  const rel = currentSubdir ? `${currentSubdir}/${name}` : name;
+  try {
+    const res = await api(`/api/repos/${state.selectedId}/tree/check-ignore?path=${encodeURIComponent(rel)}`);
+    if (!res.ignored) {
+      toast("Not ignored (or status changed since last scan).", "err");
+      return;
+    }
+    openModal((close) => h("div", { class: "modal", role: "dialog", "aria-modal": "true" },
+      h("h3", {}, "Why is this ignored?"),
+      h("p", {}, h("code", {}, rel),
+        " is matched by a rule in ",
+        h("code", {}, res.source || "?"),
+        res.line !== null && res.line !== undefined ? ` at line ${res.line}` : "",
+        ".",
+      ),
+      h("div", { class: "files-ignore-rule" },
+        h("div", { style: { fontSize: "11px", color: "var(--muted)", marginBottom: "4px", textTransform: "uppercase", letterSpacing: "0.08em" } }, "Matching pattern"),
+        h("code", {}, res.rule || "?"),
+      ),
+      h("div", { class: "modal-footer" },
+        h("button", { class: "btn btn-primary", onclick: close }, "OK"),
+      ),
+    ));
+  } catch (err) {
+    toast(err.message, "err");
+  }
 }
 
 async function renderGithub(body, d) {
@@ -1734,6 +1935,60 @@ async function doPull() {
       throw err;
     }
   }
+}
+
+function promptMerge() {
+  const d = state.detail;
+  const current = d?.branches.find((b) => b.isCurrent);
+  if (!current) {
+    toast("Not on any branch right now (detached HEAD?) — can't merge.", "err");
+    return;
+  }
+
+  // Sensible defaults: target's upstream, or origin/<currentBranch>, or the
+  // first remote that has a same-named branch.
+  let defaultRemote = current.upstream?.split("/")?.[0] || d.remotes[0]?.name || "origin";
+  let defaultBranch = current.upstream?.split("/").slice(1).join("/") || current.name;
+
+  formModal({
+    title: `Merge into ${current.name}`,
+    description: "Runs `git merge <remote>/<branch>`. If the merge can't be fast-forwarded, git will create a merge commit (unless you pick ff-only).",
+    submitLabel: "Merge",
+    fields: [
+      { name: "remote", label: "Remote", value: defaultRemote, hint: "Leave blank to merge a local branch name without remote prefix." },
+      { name: "branch", label: "Branch to merge", value: defaultBranch },
+      { name: "strategy", label: "Strategy", type: "radio", value: "default",
+        options: [
+          ["default", "Default", "Fast-forward when possible, create a merge commit otherwise."],
+          ["ff-only", "Fast-forward only", "Refuse if a merge commit would be needed."],
+          ["no-ff", "Always create a merge commit", "Preserve a branch point even when ff would work."],
+        ],
+      },
+    ],
+    onSubmit: async ({ remote, branch, strategy }) => {
+      if (!branch) throw new Error("Branch is required.");
+      const body = {
+        remote: remote || null,
+        branch,
+        ffOnly: strategy === "ff-only",
+        noFf: strategy === "no-ff",
+      };
+      try {
+        const res = await api(`/api/repos/${state.selectedId}/merge`, {
+          method: "POST",
+          body: JSON.stringify(body),
+        });
+        toast(`Merged ${remote ? remote + "/" : ""}${branch} into ${current.name}`);
+        await refreshDetail();
+      } catch (err) {
+        const m = (err.message || "").toLowerCase();
+        if (m.includes("conflict") || m.includes("automatic merge failed")) {
+          toast("Merge has conflicts — resolve in your editor, then `git merge --continue` or click Abort.", "err");
+        }
+        throw err;
+      }
+    },
+  });
 }
 
 function promptPush() {

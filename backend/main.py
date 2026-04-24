@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import activity, github, repo, store
+from . import activity, github, repo, store, worktree
 from .scanner import RepoEntry, classify_path, scan
 
 ROOT_DIR = os.environ.get("TETHER_ROOT", os.path.expanduser("~"))
@@ -556,6 +556,49 @@ def do_pull(repo_id: str, body: PullBody | None = None) -> dict:
     return {"ok": True, "output": out}
 
 
+class MergeBody(BaseModel):
+    remote: str | None = None
+    branch: str
+    ffOnly: bool = False
+    noFf: bool = False
+
+
+@app.post("/api/repos/{repo_id}/merge")
+def do_merge(repo_id: str, body: MergeBody) -> dict:
+    entry = _get(repo_id)
+    if body.ffOnly and body.noFf:
+        raise HTTPException(status_code=400, detail="ffOnly and noFf are mutually exclusive")
+    ref = f"{body.remote}/{body.branch}" if body.remote else body.branch
+    try:
+        out = repo.merge(entry.path, ref, ff_only=body.ffOnly, no_ff=body.noFf)
+    except repo.GitError as e:
+        # Merge conflicts / refusals come back as GitError. Surface the text
+        # so the frontend can show it cleanly.
+        raise HTTPException(status_code=409, detail=str(e))
+    activity.log_event(
+        "merge",
+        repo_path=entry.path, repo_id=entry.id, repo_name=entry.name,
+        details={
+            "ref": ref,
+            "remote": body.remote,
+            "branch": body.branch,
+            "ffOnly": body.ffOnly,
+            "noFf": body.noFf,
+        },
+    )
+    return {"ok": True, "output": out}
+
+
+@app.post("/api/repos/{repo_id}/merge/abort")
+def do_merge_abort(repo_id: str) -> dict:
+    entry = _get(repo_id)
+    try:
+        out = repo.merge_abort(entry.path)
+    except repo.GitError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True, "output": out}
+
+
 class PushBody(BaseModel):
     remote: str
     branch: str
@@ -834,6 +877,27 @@ def audit() -> dict:
         "unknown": unknown,
         "notFound": not_found,
     }
+
+
+# --- Working tree (what actually gets pushed) --------------------
+
+
+@app.get("/api/repos/{repo_id}/tree")
+def get_tree(repo_id: str, subdir: str = "") -> dict:
+    entry = _get(repo_id)
+    try:
+        return worktree.list_tree(entry.path, subdir=subdir)
+    except worktree.WorkTreeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/repos/{repo_id}/tree/check-ignore")
+def get_check_ignore(repo_id: str, path: str) -> dict:
+    entry = _get(repo_id)
+    try:
+        return worktree.check_ignore(entry.path, path)
+    except worktree.WorkTreeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 # --- Project (local directory) management -------------------------

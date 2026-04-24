@@ -130,6 +130,34 @@ def push(path: str, remote: str, branch: str, *, set_upstream: bool = False) -> 
     return _git(path, *args, timeout=120.0)
 
 
+def merge(
+    path: str,
+    ref: str,
+    *,
+    ff_only: bool = False,
+    no_ff: bool = False,
+    commit_message: str | None = None,
+) -> str:
+    """Run `git merge` into the current branch.
+
+    ``ref`` is typically ``<remote>/<branch>`` (e.g. ``origin/main``) but any
+    committish works.
+    """
+    args = ["merge"]
+    if ff_only:
+        args.append("--ff-only")
+    elif no_ff:
+        args.append("--no-ff")
+    if commit_message:
+        args += ["-m", commit_message]
+    args.append(ref)
+    return _git(path, *args, timeout=120.0)
+
+
+def merge_abort(path: str) -> str:
+    return _git(path, "merge", "--abort")
+
+
 def branches(path: str) -> list[Branch]:
     try:
         current = _git(path, "symbolic-ref", "--quiet", "--short", "HEAD").strip()

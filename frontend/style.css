@@ -1105,6 +1105,202 @@ kbd.kbd {
   padding-top: 6px;
 }
 
+/* --- Files tab (working-tree inspector) ----------------------- */
+
+.files-header {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.files-breadcrumbs {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.files-breadcrumbs button {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--ink-soft);
+  font: inherit;
+  padding: 2px 6px;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+
+.files-breadcrumbs button:hover {
+  background: var(--surface-alt);
+  border-color: var(--hairline);
+}
+
+.files-breadcrumbs span.sep {
+  color: var(--muted-soft);
+}
+
+.files-legend {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--muted);
+  flex-wrap: wrap;
+}
+
+.legend-swatch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend-swatch .status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.status-dot--tracked { background: var(--success); }
+.status-dot--untracked { background: var(--warn); }
+.status-dot--ignored { background: var(--muted-soft); }
+.status-dot--mixed { background: linear-gradient(90deg, var(--success) 50%, var(--muted-soft) 50%); }
+.status-dot--empty { background: transparent; border: 1px dashed var(--muted-soft); }
+
+.files-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.files-toggle input { margin: 0; }
+
+.files-total-summary {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: var(--muted);
+  margin-bottom: 10px;
+}
+
+.files-total-summary strong { color: var(--ink); font-weight: 600; }
+
+.file-list {
+  display: grid;
+  gap: 2px;
+}
+
+.file-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  gap: 12px;
+  align-items: center;
+  padding: 6px 10px;
+  border-radius: var(--r-sm);
+  font-size: 13px;
+  transition: background 120ms var(--ease-out);
+  border: 1px solid transparent;
+  background: transparent;
+  font-family: inherit;
+  color: inherit;
+  text-align: left;
+  width: 100%;
+  cursor: default;
+}
+
+.file-row--dir { cursor: pointer; }
+.file-row--file { cursor: default; }
+
+.file-row:hover {
+  background: var(--surface-alt);
+  border-color: var(--hairline);
+}
+
+.file-row-status {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.file-row-icon {
+  color: var(--muted);
+  display: inline-flex;
+}
+
+.file-row-name {
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  color: var(--ink);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.file-row--ignored .file-row-name {
+  color: var(--muted);
+  text-decoration: line-through;
+  text-decoration-color: var(--muted-soft);
+}
+
+.file-row--untracked .file-row-name {
+  color: var(--warn);
+}
+
+.file-row-summary {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.file-row-summary .sum--tracked { color: var(--success); }
+.file-row-summary .sum--untracked { color: var(--warn); }
+.file-row-summary .sum--ignored { color: var(--muted-soft); }
+
+.file-row-meta {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.files-ignore-rule {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: var(--surface-alt);
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-md);
+  font-size: 12px;
+  color: var(--ink-soft);
+}
+
+.files-ignore-rule code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  background: rgba(0, 0, 0, 0.06);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+
 /* --- Visibility actions (GitHub tab) -------------------------- */
 
 .vis-control {
